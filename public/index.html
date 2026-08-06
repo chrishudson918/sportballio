@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sportballio Configurator</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #0b1120;
+            color: #f8fafc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 1.5rem;
+        }
+        .card {
+            background-color: #1e293b;
+            padding: 2.5rem;
+            border-radius: 16px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+            max-width: 560px;
+            width: 100%;
+        }
+        h1 { margin-top: 0; color: #38bdf8; text-align: center; font-size: 1.8rem; }
+        p.subtitle { text-align: center; color: #94a3b8; font-size: 0.95rem; margin-top: -0.5rem; margin-bottom: 2rem; }
+        .step { display: none; }
+        .step.active { display: block; }
+        .form-group { margin-bottom: 1.25rem; }
+        label { display: block; margin-bottom: 0.4rem; font-weight: 600; color: #cbd5e1; font-size: 0.9rem; }
+        input[type="text"], input[type="password"], select {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            background-color: #0f172a;
+            color: #fff;
+            font-size: 0.95rem;
+        }
+        .checkbox-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 0.75rem;
+            margin-top: 0.5rem;
+        }
+        .checkbox-card {
+            background: #0f172a;
+            border: 1px solid #334155;
+            padding: 0.75rem;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .btn-group { display: flex; gap: 1rem; margin-top: 1.5rem; }
+        button {
+            flex: 1;
+            padding: 0.85rem;
+            border: none;
+            border-radius: 8px;
+            background-color: #0284c7;
+            color: white;
+            font-weight: bold;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #0369a1; }
+        button.btn-secondary { background-color: #334155; }
+        button.btn-secondary:hover { background-color: #475569; }
+        .multi-select-box {
+            max-height: 180px;
+            overflow-y: auto;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 0.5rem;
+        }
+        .multi-select-item {
+            padding: 0.4rem 0.6rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.88rem;
+        }
+        .error-msg { color: #f87171; font-size: 0.85rem; margin-top: 0.5rem; display: none; }
+        .code-block {
+            background: #0f172a;
+            padding: 0.8rem;
+            border-radius: 8px;
+            word-break: break-all;
+            color: #4ade80;
+            font-family: monospace;
+            font-size: 0.9rem;
+            margin: 0.5rem 0 1.5rem 0;
+            border: 1px solid #334155;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h1>Sportballio</h1>
+        <p class="subtitle">Xtream IPTV Live Sports Add-on for Nuvio</p>
+
+        <!-- STEP 0: Mode Selection -->
+        <div id="step-0" class="step active">
+            <p style="text-align: center; color: #cbd5e1; margin-bottom: 2rem;">Welcome! Select an option to get started:</p>
+            <div class="btn-group" style="flex-direction: column;">
+                <button onclick="startNewUser()">New User Configuration</button>
+                <button class="btn-secondary" onclick="startSignIn()">Sign In / Edit Configuration</button>
+            </div>
+        </div>
+
+        <!-- STEP 1: Xtream Credentials / Sign In -->
+        <div id="step-1" class="step">
+            <h3 id="step1-title">Xtream IPTV Credentials</h3>
+            <div id="sign-in-uuid-group" class="form-group" style="display: none;">
+                <label>Your Assigned UUID</label>
+                <input type="text" id="login-uuid" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000">
+            </div>
+            <div class="form-group">
+                <label>Xtream Server URL</label>
+                <input type="text" id="xtream-url" placeholder="http://your-iptv-domain.com:8080">
+            </div>
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="xtream-user" placeholder="IPTV Username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="xtream-pass" placeholder="IPTV Password">
+            </div>
+            <div id="err-step1" class="error-msg"></div>
+            <div class="btn-group">
+                <button class="btn-secondary" onclick="goToStep(0)">Back</button>
+                <button onclick="verifyCredentials()">Next</button>
+            </div>
+        </div>
+
+        <!-- STEP 2: Sport Selection -->
+        <div id="step-2" class="step">
+            <h3>Select Sports Catalogs</h3>
+            <p style="color: #94a3b8; font-size: 0.85rem;">Choose the leagues you want added as Nuvio catalogs:</p>
+            <div class="checkbox-group">
+                <label class="checkbox-card"><input type="checkbox" value="NBA" class="sport-chk" checked> NBA</label>
+                <label class="checkbox-card"><input type="checkbox" value="NFL" class="sport-chk" checked> NFL</label>
+                <label class="checkbox-card"><input type="checkbox" value="MLB" class="sport-chk" checked> MLB</label>
+                <label class="checkbox-card"><input type="checkbox" value="NHL" class="sport-chk" checked> NHL</label>
+                <label class="checkbox-card"><input type="checkbox" value="WNBA" class="sport-chk" checked> WNBA</label>
+            </div>
+            <div id="err-step2" class="error-msg"></div>
+            <div class="btn-group">
+                <button class="btn-secondary" onclick="goToStep(1)">Back</button>
+                <button onclick="saveSportsSelection()">Next</button>
+            </div>
+        </div>
+
+        <!-- STEP 3: Folder / Category Mapping -->
+        <div id="step-3" class="step">
+            <h3>Map Playlist Folders</h3>
+            <p style="color: #94a3b8; font-size: 0.85rem;">Link your IPTV playlist folders/categories to each selected sport:</p>
+            <div id="folder-mapping-container"></div>
+            <div id="err-step3" class="error-msg"></div>
+            <div class="btn-group">
+                <button class="btn-secondary" onclick="goToStep(2)">Back</button>
+                <button onclick="saveFolderMapping()">Next</button>
+            </div>
+        </div>
+
+        <!-- STEP 4: Password Creation -->
+        <div id="step-4" class="step">
+            <h3>Security & Password</h3>
+            <p style="color: #94a3b8; font-size: 0.85rem;">Create a password to secure and edit your configuration in the future:</p>
+            <div class="form-group">
+                <label>Set Password</label>
+                <input type="password" id="config-pass">
+            </div>
+            <div class="form-group">
+                <label>Confirm Password</label>
+                <input type="password" id="config-pass-confirm">
+            </div>
+            <div id="err-step4" class="error-msg"></div>
+            <div class="btn-group">
+                <button class="btn-secondary" onclick="goToStep(3)">Back</button>
+                <button onclick="finalizeConfiguration()">Save & Generate Manifest</button>
+            </div>
+        </div>
+
+        <!-- STEP 5: Final Manifest & UUID Display -->
+        <div id="step-5" class="step">
+            <h3 style="color: #4ade80; text-align: center;">Configuration Saved!</h3>
+            
+            <label>Your Assigned UUID (Save for future sign-in):</label>
+            <div id="display-uuid" class="code-block"></div>
+
+            <label>Nuvio Manifest URL:</label>
+            <div id="display-manifest-url" class="code-block"></div>
+
+            <div class="btn-group" style="flex-direction: column;">
+                <button onclick="installToStremio()" style="background-color: #16a34a;">Install to Nuvio / Stremio</button>
+                <button class="btn-secondary" onclick="location.reload()">Return to Main Menu</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        let isExistingUser = false;
+        let fetchedCategories = [];
+        let selectedSportsList = [];
+        let sportFolderMappings = {};
+
+        function goToStep(stepNum) {
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+            document.getElementById(`step-${stepNum}`).classList.add('active');
+        }
+
+        function startNewUser() {
+            isExistingUser = false;
+            document.getElementById('step1-title').innerText = 'Xtream IPTV Credentials';
+            document.getElementById('sign-in-uuid-group').style.display = 'none';
+            goToStep(1);
+        }
+
+        function startSignIn() {
+            isExistingUser = true;
+            document.getElementById('step1-title').innerText = 'Sign In to Edit Configuration';
+            document.getElementById('sign-in-uuid-group').style.display = 'block';
+            goToStep(1);
+        }
+
+        async function verifyCredentials() {
+            const url = document.getElementById('xtream-url').value.trim();
+            const username = document.getElementById('xtream-user').value.trim();
+            const password = document.getElementById('xtream-pass').value.trim();
+            const errBox = document.getElementById('err-step1');
+
+            if (!url || !username || !password) {
+                errBox.innerText = 'Please fill out all credentials.';
+                errBox.style.display = 'block';
+                return;
+            }
+
+            errBox.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/xtream/categories', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, username, password })
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    errBox.innerText = data.error || 'Failed to authenticate Xtream account.';
+                    errBox.style.display = 'block';
+                    return;
+                }
+
+                fetchedCategories = data.categories || [];
+                goToStep(2);
+            } catch (e) {
+                errBox.innerText = 'Server error connecting to Xtream service.';
+                errBox.style.display = 'block';
+            }
+        }
+
+        function saveSportsSelection() {
+            selectedSportsList = [];
+            document.querySelectorAll('.sport-chk:checked').forEach(chk => {
+                selectedSportsList.push(chk.value);
+            });
+
+            const errBox = document.getElementById('err-step2');
+            if (selectedSportsList.length === 0) {
+                errBox.innerText = 'Please select at least one sport.';
+                errBox.style.display = 'block';
+                return;
+            }
+            errBox.style.display = 'none';
+
+            renderFolderMappings();
+            goToStep(3);
+        }
+
+        function renderFolderMappings() {
+            const container = document.getElementById('folder-mapping-container');
+            container.innerHTML = '';
+
+            selectedSportsList.forEach(sport => {
+                const sportDiv = document.createElement('div');
+                sportDiv.className = 'form-group';
+                sportDiv.style.marginBottom = '1.5rem';
+
+                const label = document.createElement('label');
+                label.innerText = `Select Category Folders for ${sport}:`;
+                sportDiv.appendChild(label);
+
+                const selectBox = document.createElement('div');
+                selectBox.className = 'multi-select-box';
+
+                fetchedCategories.forEach(cat => {
+                    const item = document.createElement('div');
+                    item.className = 'multi-select-item';
+                    item.innerHTML = `<label><input type="checkbox" value="${cat.category_id}" class="cat-chk-${sport}"> ${cat.category_name}</label>`;
+                    selectBox.appendChild(item);
+                });
+
+                sportDiv.appendChild(selectBox);
+                container.appendChild(sportDiv);
+            });
+        }
+
+        function saveFolderMapping() {
+            sportFolderMappings = {};
+            selectedSportsList.forEach(sport => {
+                sportFolderMappings[sport] = [];
+                document.querySelectorAll(`.cat-chk-${sport}:checked`).forEach(chk => {
+                    sportFolderMappings[sport].push(chk.value);
+                });
+            });
+
+            goToStep(4);
+        }
+
+        async function finalizeConfiguration() {
+            const pass = document.getElementById('config-pass').value;
+            const confirm = document.getElementById('config-pass-confirm').value;
+            const errBox = document.getElementById('err-step4');
+
+            if (!pass || pass !== confirm) {
+                errBox.innerText = 'Passwords do not match or are empty.';
+                errBox.style.display = 'block';
+                return;
+            }
+
+            errBox.style.display = 'none';
+
+            const payload = {
+                xtream: {
+                    url: document.getElementById('xtream-url').value.trim(),
+                    username: document.getElementById('xtream-user').value.trim(),
+                    password: document.getElementById('xtream-pass').value.trim()
+                },
+                selectedSports: selectedSportsList,
+                sportCategories: sportFolderMappings,
+                password: pass
+            };
+
+            let endpoint = '/api/user/register';
+            if (isExistingUser) {
+                payload.uuid = document.getElementById('login-uuid').value.trim();
+                endpoint = '/api/user/update';
+            }
+
+            try {
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    errBox.innerText = data.error || 'Failed to save configuration.';
+                    errBox.style.display = 'block';
+                    return;
+                }
+
+                const fullManifestUrl = window.location.origin + data.manifestUrl;
+                document.getElementById('display-uuid').innerText = data.uuid;
+                document.getElementById('display-manifest-url').innerText = fullManifestUrl;
+                goToStep(5);
+            } catch (e) {
+                errBox.innerText = 'An error occurred while saving.';
+                errBox.style.display = 'block';
+            }
+        }
+
+        function installToStremio() {
+            const url = document.getElementById('display-manifest-url').innerText;
+            window.location.href = url.replace(/^https?:\/\//, 'stremio://');
+        }
+    </script>
+</body>
+</html>
