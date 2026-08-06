@@ -2,8 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const bcrypt = require('bcryptjs');
-from_uuid = require('uuid');
-const { v4: uuidv4 } = from_uuid;
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT || 2323;
@@ -12,16 +11,79 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// In-memory database storing user configs mapped by UUID
-// In production, sync to a sqlite/db file or encrypted volume.
 const userConfigs = {};
 
-// 1. Validate Xtream Credentials & Fetch Categories
+// Helper mapping Stremio sport names to ESPN API endpoints
+const ESPN_ENDPOINTS = {
+  NBA: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
+  NFL: 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
+  MLB: 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard',
+  NHL: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard',
+  WNBA: 'https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard'
+};
+
+// 1. Fetch Today's Games from ESPN API
+async function fetchTodayGames(sport) {
+  const endpoint = ESPN_ENDPOINTS[sport.toUpperCase()];
+  if (!endpoint) return [];
+
+  try {
+    const res = await axios.get(endpoint, { timeout: 5000 });
+    const events = res.data?.events || [];
+
+    return events.map(event => {
+      const competition = event.competitions?.[0] || {};
+      const competitors = competition.competitors || [];
+      
+      const homeTeam = competitors.find(c => c.homeAway === 'home')?.team || {};
+      const awayTeam = competitors.find(c => c.homeAway === 'away')?.team || {};
+
+      return {
+        id: event.id,
+        name: event.name || `${awayTeam.displayName} vs ${homeTeam.displayName}`,
+        shortName: event.shortName || `${awayTeam.abbreviation} @ ${homeTeam.abbreviation}`,
+        homeTeam: homeTeam.displayName || 'Home',
+        awayTeam: awayTeam.displayName || 'Away',
+        poster: homeTeam.logo || awayTeam.logo || 'https://via.placeholder.com/300x450?text=Live+Sports',
+        background: competition.venue?.fullName 
+          ? `https://via.placeholder.com/1920x1080/0f172a/38bdf8.png&text=${encodeURIComponent(event.name)}`
+          : 'https://via.placeholder.com/1920x1080/0f172a/38bdf8.png&text=Live+Sports',
+        status: event.status?.type?.detail || 'Scheduled',
+        date: event.date
+      };
+    });
+  } catch (err) {
+    console.error(`Error fetching ESPN scoreboard for ${sport}:`, err.message);
+    return [];
+  }
+}
+
+// 2. Fetch Xtream Streams for Configured Categories
+async function fetchXtreamLiveStreams(user, categoryIds = []) {
+  if (!categoryIds || categoryIds.length === 0) return [];
+  const { url, username, password } = user.xtream;
+  const baseUrl = url.replace(/\/+$/, '');
+
+  let allStreams = [];
+  for (const catId of categoryIds) {
+    const apiUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams&category_id=${catId}`;
+    try {
+      const res = await axios.get(apiUrl, { timeout: 7000 });
+      if (Array.isArray(res.data)) {
+        allStreams = allStreams.concat(res.data);
+      }
+    } catch (e) {
+      console.error(`Failed to fetch category ${catId} from Xtream:`, e.message);
+    }
+  }
+  return allStreams;
+}
+
+// ---------------- REST API ROUTES ----------------
+
 app.post('/api/xtream/categories', async (req, res) => {
   const { url, username, password } = req.body;
-  if (!url || !username || !password) {
-    return res.status(400).json({ error: 'URL, username, and password are required.' });
-  }
+  if (!url || !username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
   const baseUrl = url.replace(/\/+$/, '');
   const apiUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_categories`;
@@ -30,147 +92,146 @@ app.post('/api/xtream/categories', async (req, res) => {
     const response = await axios.get(apiUrl, { timeout: 10000 });
     if (Array.isArray(response.data)) {
       return res.json({ success: true, categories: response.data });
-    } else if (response.data && response.data.user_info && response.data.user_info.auth === 0) {
-      return res.status(401).json({ error: 'Invalid Xtream credentials.' });
-    } else {
-      return res.status(400).json({ error: 'Failed to fetch categories from Xtream server.' });
     }
+    return res.status(401).json({ error: 'Invalid Xtream credentials.' });
   } catch (err) {
-    return res.status(500).json({ error: 'Unable to connect to Xtream server: ' + err.message });
+    return res.status(500).json({ error: 'Unable to connect to IPTV server.' });
   }
 });
 
-// 2. Save New User Configuration
 app.post('/api/user/register', async (req, res) => {
   const { xtream, selectedSports, sportCategories, password } = req.body;
-  if (!xtream || !selectedSports || !sportCategories || !password) {
-    return res.status(400).json({ error: 'Missing required configuration fields.' });
-  }
-
   const uuid = uuidv4();
   const passwordHash = await bcrypt.hash(password, 10);
 
-  userConfigs[uuid] = {
-    uuid,
-    passwordHash,
-    xtream, // { url, username, password }
-    selectedSports, // ['NBA', 'NFL', ...]
-    sportCategories // { NBA: [catId1, catId2], NFL: [...] }
-  };
-
-  return res.json({
-    success: true,
-    uuid,
-    manifestUrl: `/user/${uuid}/manifest.json`
-  });
+  userConfigs[uuid] = { uuid, passwordHash, xtream, selectedSports, sportCategories };
+  return res.json({ success: true, uuid, manifestUrl: `/user/${uuid}/manifest.json` });
 });
 
-// 3. Authenticate Existing User
 app.post('/api/user/login', async (req, res) => {
   const { uuid, password } = req.body;
   const user = userConfigs[uuid];
-
-  if (!user) {
-    return res.status(404).json({ error: 'UUID not found.' });
+  if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    return res.status(401).json({ error: 'Invalid UUID or password.' });
   }
-
-  const match = await bcrypt.compare(password, user.passwordHash);
-  if (!match) {
-    return res.status(401).json({ error: 'Incorrect password.' });
-  }
-
-  return res.json({
-    success: true,
-    uuid: user.uuid,
-    xtream: user.xtream,
-    selectedSports: user.selectedSports,
-    sportCategories: user.sportCategories,
-    manifestUrl: `/user/${uuid}/manifest.json`
-  });
+  return res.json({ success: true, uuid: user.uuid, xtream: user.xtream, selectedSports: user.selectedSports, sportCategories: user.sportCategories, manifestUrl: `/user/${uuid}/manifest.json` });
 });
 
-// 4. Update Existing User Configuration
 app.post('/api/user/update', async (req, res) => {
   const { uuid, password, xtream, selectedSports, sportCategories } = req.body;
   const user = userConfigs[uuid];
-
-  if (!user) {
-    return res.status(404).json({ error: 'UUID not found.' });
+  if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    return res.status(401).json({ error: 'Invalid UUID or password.' });
   }
-
-  const match = await bcrypt.compare(password, user.passwordHash);
-  if (!match) {
-    return res.status(401).json({ error: 'Incorrect password.' });
-  }
-
   user.xtream = xtream;
   user.selectedSports = selectedSports;
   user.sportCategories = sportCategories;
-
-  return res.json({
-    success: true,
-    uuid: user.uuid,
-    manifestUrl: `/user/${uuid}/manifest.json`
-  });
+  return res.json({ success: true, uuid: user.uuid, manifestUrl: `/user/${uuid}/manifest.json` });
 });
 
-// 5. Dynamic Stremio / Nuvio Manifest Generator
-app.get('/user/:uuid/manifest.json', (req, res) => {
-  const { uuid } = req.params;
-  const user = userConfigs[uuid];
+// ---------------- STREMIO / NUVIO ENGINE ----------------
 
-  if (!user) {
-    return res.status(404).json({ error: 'Manifest not found or invalid UUID.' });
-  }
+app.get('/user/:uuid/manifest.json', (req, res) => {
+  const user = userConfigs[req.params.uuid];
+  if (!user) return res.status(404).json({ error: 'Invalid manifest UUID' });
 
   const catalogs = user.selectedSports.map(sport => ({
     type: 'sports',
     id: `sportballio_${sport.toLowerCase()}`,
-    name: `${sport} (Today's Games)`
+    name: `${sport} - Today's Games`
   }));
 
-  const manifest = {
-    id: `org.sportballio.${uuid}`,
+  res.setHeader('Content-Type', 'application/json');
+  res.json({
+    id: `org.sportballio.${user.uuid}`,
     version: '1.0.0',
-    name: 'Sportballio Live Sports',
-    description: 'Personalized IPTV Live Sports Add-on for Nuvio & Stremio',
+    name: 'Sportballio',
+    description: 'IPTV Live Sports directly mapped to ESPN game schedules',
     resources: ['catalog', 'meta', 'stream'],
     types: ['sports'],
-    catalogs: catalogs
-  };
-
-  res.setHeader('Content-Type', 'application/json');
-  res.json(manifest);
+    catalogs
+  });
 });
 
-// 6. Dynamic Catalog Handler for Today's Games
+// Dynamic Catalog Endpoint (ESPN Real-Time Games)
 app.get('/user/:uuid/catalog/sports/:id.json', async (req, res) => {
-  const { uuid, id } = req.params;
-  const user = userConfigs[uuid];
+  const user = userConfigs[req.params.uuid];
+  if (!user) return res.json({ metas: [] });
 
-  if (!user) {
-    return res.status(404).json({ metas: [] });
-  }
+  const sport = req.params.id.replace('sportballio_', '').toUpperCase();
+  const games = await fetchTodayGames(sport);
 
-  const sportName = id.replace('sportballio_', '').toUpperCase();
-  const categoryIds = user.sportCategories[sportName] || [];
-
-  // Placeholder metas demonstrating catalog payload with landscape & portrait graphics
-  const metas = [
-    {
-      id: `sportballio:${sportName.toLowerCase()}_game_1`,
-      type: 'sports',
-      name: `${sportName}: Live Game 1`,
-      poster: `https://dummyimage.com/600x900/0f172a/38bdf8.png&text=${sportName}+Live+Game+1`,
-      background: `https://dummyimage.com/1920x1080/0f172a/38bdf8.png&text=${sportName}+Matchday+Coverage`,
-      description: `Today's live streams for ${sportName} retrieved from configured Xtream categories.`
-    }
-  ];
+  const metas = games.map(game => ({
+    id: `sportballio:${sport.toLowerCase()}:${game.id}`,
+    type: 'sports',
+    name: game.name,
+    poster: game.poster,
+    background: game.background,
+    description: `Status: ${game.status} | Scheduled: ${new Date(game.date).toLocaleTimeString()}`
+  }));
 
   res.setHeader('Content-Type', 'application/json');
   res.json({ metas });
 });
 
+// Dynamic Meta Details Endpoint
+app.get('/user/:uuid/meta/sports/:id.json', async (req, res) => {
+  const [prefix, sport, gameId] = req.params.id.split(':');
+  const games = await fetchTodayGames(sport);
+  const game = games.find(g => g.id === gameId);
+
+  if (!game) return res.json({ meta: {} });
+
+  res.setHeader('Content-Type', 'application/json');
+  res.json({
+    meta: {
+      id: req.params.id,
+      type: 'sports',
+      name: game.name,
+      poster: game.poster,
+      background: game.background,
+      description: `Status: ${game.status} | Scheduled: ${new Date(game.date).toLocaleTimeString()}`
+    }
+  });
+});
+
+// Dynamic Stream Resolver Endpoint (Matches ESPN Game to Xtream Streams)
+app.get('/user/:uuid/stream/sports/:id.json', async (req, res) => {
+  const user = userConfigs[req.params.uuid];
+  if (!user) return res.json({ streams: [] });
+
+  const [prefix, sport, gameId] = req.params.id.split(':');
+  const games = await fetchTodayGames(sport);
+  const game = games.find(g => g.id === gameId);
+
+  if (!game) return res.json({ streams: [] });
+
+  const configuredCategoryIds = user.sportCategories[sport.toUpperCase()] || [];
+  const xtreamStreams = await fetchXtreamLiveStreams(user, configuredCategoryIds);
+
+  const homeKw = game.homeTeam.toLowerCase().split(' ');
+  const awayKw = game.awayTeam.toLowerCase().split(' ');
+
+  // Filter streams matching home or away team names
+  const matchedStreams = xtreamStreams.filter(stream => {
+    const streamName = stream.name.toLowerCase();
+    const matchesHome = homeKw.some(kw => kw.length > 3 && streamName.includes(kw));
+    const matchesAway = awayKw.some(kw => kw.length > 3 && streamName.includes(kw));
+    return matchesHome || matchesAway;
+  });
+
+  const streamsToReturn = matchedStreams.length > 0 ? matchedStreams : xtreamStreams;
+  const baseUrl = user.xtream.url.replace(/\/+$/, '');
+
+  const streams = streamsToReturn.map(s => ({
+    title: `${s.name} (${s.stream_type || 'Live'})`,
+    url: `${baseUrl}/live/${encodeURIComponent(user.xtream.username)}/${encodeURIComponent(user.xtream.password)}/${s.stream_id}.m3u8`
+  }));
+
+  res.setHeader('Content-Type', 'application/json');
+  res.json({ streams });
+});
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Sportballio server active on http://0.0.0.0:${PORT}`);
+  console.log(`Sportballio running at http://0.0.0.0:${PORT}`);
 });
