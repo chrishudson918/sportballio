@@ -3,15 +3,35 @@ const cors = require('cors');
 const axios = require('axios');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 2323;
+const DATA_FILE = path.join(__dirname, 'users.json');
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-const userConfigs = {};
+// Load user configs from disk on startup
+let userConfigs = {};
+if (fs.existsSync(DATA_FILE)) {
+  try {
+    userConfigs = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    console.log(`[Storage] Loaded ${Object.keys(userConfigs).length} user configurations from users.json`);
+  } catch (err) {
+    console.error('[Storage] Error reading users.json:', err.message);
+  }
+}
+
+function saveUserConfigs() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(userConfigs, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[Storage] Failed to save users.json:', err.message);
+  }
+}
 
 const ESPN_ENDPOINTS = {
   NBA: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
@@ -27,9 +47,12 @@ async function fetchTodayGames(sport) {
   if (!endpoint) return [];
 
   try {
-    // Force current date string (YYYYMMDD) to prevent timezone mismatch
     const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
-    const res = await axios.get(`${endpoint}?dates=${todayStr}`, { timeout: 6000 });
+    const res = await axios.get(`${endpoint}?dates=${todayStr}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      timeout: 6000
+    });
+
     const events = res.data?.events || [];
 
     return events.map(event => {
@@ -46,17 +69,17 @@ async function fetchTodayGames(sport) {
         awayTeam: awayTeam.displayName || '',
         poster: homeTeam.logo || awayTeam.logo || 'https://via.placeholder.com/300x450?text=Live+Sports',
         background: 'https://via.placeholder.com/1920x1080/0f172a/38bdf8.png?text=Live+Sports',
-        status: event.status?.type?.detail || 'Live/Scheduled',
+        status: event.status?.type?.detail || 'Scheduled',
         date: event.date
       };
     });
   } catch (err) {
-    console.error(`Error fetching ESPN scoreboard for ${sport}:`, err.message);
+    console.error(`[ESPN] Error fetching scoreboard for ${sport}:`, err.message);
     return [];
   }
 }
 
-// Fetch Xtream Live Streams for user's configured sport category IDs
+// Fetch Xtream streams from configured categories
 async function fetchXtreamLiveStreams(user, categoryIds = []) {
   if (!categoryIds || categoryIds.length === 0) return [];
   const { url, username, password } = user.xtream;
@@ -66,18 +89,21 @@ async function fetchXtreamLiveStreams(user, categoryIds = []) {
   for (const catId of categoryIds) {
     const apiUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams&category_id=${catId}`;
     try {
-      const res = await axios.get(apiUrl, { timeout: 7000 });
+      const res = await axios.get(apiUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        timeout: 7000
+      });
       if (Array.isArray(res.data)) {
         allStreams = allStreams.concat(res.data);
       }
     } catch (e) {
-      console.error(`Failed to fetch category ${catId} from Xtream:`, e.message);
+      console.error(`[Xtream] Failed to fetch category ${catId}:`, e.message);
     }
   }
   return allStreams;
 }
 
-// ---------------- REST API ROUTES ----------------
+// ---------------- API ENDPOINTS ----------------
 
 app.post('/api/xtream/categories', async (req, res) => {
   const { url, username, password } = req.body;
@@ -87,7 +113,10 @@ app.post('/api/xtream/categories', async (req, res) => {
   const apiUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_categories`;
 
   try {
-    const response = await axios.get(apiUrl, { timeout: 10000 });
+    const response = await axios.get(apiUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      timeout: 10000
+    });
     if (Array.isArray(response.data)) {
       return res.json({ success: true, categories: response.data });
     }
@@ -103,6 +132,8 @@ app.post('/api/user/register', async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 10);
 
   userConfigs[uuid] = { uuid, passwordHash, xtream, selectedSports, sportCategories };
+  saveUserConfigs();
+
   return res.json({ success: true, uuid, manifestUrl: `/user/${uuid}/manifest.json` });
 });
 
@@ -124,6 +155,8 @@ app.post('/api/user/update', async (req, res) => {
   user.xtream = xtream;
   user.selectedSports = selectedSports;
   user.sportCategories = sportCategories;
+  saveUserConfigs();
+
   return res.json({ success: true, uuid: user.uuid, manifestUrl: `/user/${uuid}/manifest.json` });
 });
 
@@ -133,34 +166,31 @@ app.get('/user/:uuid/manifest.json', (req, res) => {
   const user = userConfigs[req.params.uuid];
   if (!user) return res.status(404).json({ error: 'Invalid manifest UUID' });
 
-  // Use date string in catalog ID to bypass Stremio catalog cache daily
   const todayStr = new Date().toISOString().split('T')[0];
 
   const catalogs = user.selectedSports.map(sport => ({
     type: 'sports',
     id: `sb_${sport.toLowerCase()}_${todayStr}`,
-    name: `${sport} Schedule & Streams`
+    name: `${sport} Live Games`
   }));
 
   res.setHeader('Content-Type', 'application/json');
   res.json({
     id: `org.sportballio.${user.uuid}`,
-    version: '1.0.1',
+    version: '1.0.2',
     name: 'Sportballio Live',
-    description: 'Dynamic IPTV Sports directly mapped to daily schedules',
+    description: 'Dynamic IPTV Sports directly mapped to ESPN game schedules',
     resources: ['catalog', 'meta', 'stream'],
     types: ['sports'],
     catalogs
   });
 });
 
-// Dynamic Catalog Endpoint
 app.get('/user/:uuid/catalog/sports/:id.json', async (req, res) => {
   const user = userConfigs[req.params.uuid];
   if (!user) return res.json({ metas: [] });
 
-  const rawId = req.params.id; // e.g., sb_wnba_2026-08-05
-  const parts = rawId.split('_');
+  const parts = req.params.id.split('_');
   const sport = parts[1] ? parts[1].toUpperCase() : 'WNBA';
 
   const games = await fetchTodayGames(sport);
@@ -169,7 +199,6 @@ app.get('/user/:uuid/catalog/sports/:id.json', async (req, res) => {
 
   let metas = [];
 
-  // Build catalog cards from ESPN Game Schedule
   if (games.length > 0) {
     metas = games.map(game => ({
       id: `sb:${sport.toLowerCase()}:${game.id}`,
@@ -180,7 +209,6 @@ app.get('/user/:uuid/catalog/sports/:id.json', async (req, res) => {
       description: `Status: ${game.status}`
     }));
   } else {
-    // Direct Fallback: Show actual IPTV streams as item cards if no games in schedule
     metas = xtreamStreams.map(s => ({
       id: `sbstream:${sport.toLowerCase()}:${s.stream_id}`,
       type: 'sports',
@@ -195,47 +223,6 @@ app.get('/user/:uuid/catalog/sports/:id.json', async (req, res) => {
   res.json({ metas });
 });
 
-// Dynamic Meta Details Endpoint
-app.get('/user/:uuid/meta/sports/:id.json', async (req, res) => {
-  const user = userConfigs[req.params.uuid];
-  if (!user) return res.json({ meta: {} });
-
-  const [prefix, sport, idVal] = req.params.id.split(':');
-
-  if (prefix === 'sb') {
-    const games = await fetchTodayGames(sport.toUpperCase());
-    const game = games.find(g => g.id === idVal);
-    if (!game) return res.json({ meta: {} });
-
-    return res.json({
-      meta: {
-        id: req.params.id,
-        type: 'sports',
-        name: game.name,
-        poster: game.poster,
-        background: game.background,
-        description: `Status: ${game.status}`
-      }
-    });
-  } else {
-    const configuredCategoryIds = user.sportCategories[sport.toUpperCase()] || [];
-    const xtreamStreams = await fetchXtreamLiveStreams(user, configuredCategoryIds);
-    const stream = xtreamStreams.find(s => String(s.stream_id) === String(idVal));
-
-    return res.json({
-      meta: {
-        id: req.params.id,
-        type: 'sports',
-        name: stream ? stream.name : 'Live Stream',
-        poster: stream?.stream_icon || 'https://via.placeholder.com/300x450?text=IPTV+Stream',
-        background: 'https://via.placeholder.com/1920x1080/0f172a/38bdf8.png?text=Live+Stream',
-        description: `Direct Channel ID: ${idVal}`
-      }
-    });
-  }
-});
-
-// Dynamic Stream Resolver Endpoint
 app.get('/user/:uuid/stream/sports/:id.json', async (req, res) => {
   const user = userConfigs[req.params.uuid];
   if (!user) return res.json({ streams: [] });
@@ -245,7 +232,6 @@ app.get('/user/:uuid/stream/sports/:id.json', async (req, res) => {
   const xtreamStreams = await fetchXtreamLiveStreams(user, configuredCategoryIds);
   const baseUrl = user.xtream.url.replace(/\/+$/, '');
 
-  // Direct IPTV Stream Fallback
   if (prefix === 'sbstream') {
     const stream = xtreamStreams.find(s => String(s.stream_id) === String(idVal));
     if (!stream) return res.json({ streams: [] });
@@ -258,16 +244,13 @@ app.get('/user/:uuid/stream/sports/:id.json', async (req, res) => {
     });
   }
 
-  // ESPN Game Match
   const games = await fetchTodayGames(sport.toUpperCase());
   const game = games.find(g => g.id === idVal);
-
   if (!game) return res.json({ streams: [] });
 
   const homeKw = game.homeTeam.toLowerCase().split(' ').filter(w => w.length > 2);
   const awayKw = game.awayTeam.toLowerCase().split(' ').filter(w => w.length > 2);
 
-  // Filter streams by matching team names
   const matchedStreams = xtreamStreams.filter(s => {
     const streamName = s.name.toLowerCase();
     const matchesHome = homeKw.some(kw => streamName.includes(kw));
@@ -275,7 +258,6 @@ app.get('/user/:uuid/stream/sports/:id.json', async (req, res) => {
     return matchesHome || matchesAway;
   });
 
-  // If match yields zero, fallback to supplying all category streams
   const streamsToReturn = matchedStreams.length > 0 ? matchedStreams : xtreamStreams;
 
   const streams = streamsToReturn.map(s => ({
