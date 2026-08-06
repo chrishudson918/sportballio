@@ -13,7 +13,6 @@ app.use(express.static('public'));
 
 const userConfigs = {};
 
-// Helper mapping Stremio sport names to ESPN API endpoints
 const ESPN_ENDPOINTS = {
   NBA: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
   NFL: 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
@@ -22,13 +21,15 @@ const ESPN_ENDPOINTS = {
   WNBA: 'https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard'
 };
 
-// 1. Fetch Today's Games from ESPN API
+// Fetch live/today's games from ESPN API
 async function fetchTodayGames(sport) {
   const endpoint = ESPN_ENDPOINTS[sport.toUpperCase()];
   if (!endpoint) return [];
 
   try {
-    const res = await axios.get(endpoint, { timeout: 5000 });
+    // Force current date string (YYYYMMDD) to prevent timezone mismatch
+    const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const res = await axios.get(`${endpoint}?dates=${todayStr}`, { timeout: 6000 });
     const events = res.data?.events || [];
 
     return events.map(event => {
@@ -39,16 +40,13 @@ async function fetchTodayGames(sport) {
       const awayTeam = competitors.find(c => c.homeAway === 'away')?.team || {};
 
       return {
-        id: event.id,
-        name: event.name || `${awayTeam.displayName} vs ${homeTeam.displayName}`,
-        shortName: event.shortName || `${awayTeam.abbreviation} @ ${homeTeam.abbreviation}`,
-        homeTeam: homeTeam.displayName || 'Home',
-        awayTeam: awayTeam.displayName || 'Away',
+        id: String(event.id),
+        name: event.name || `${awayTeam.displayName || 'Away'} vs ${homeTeam.displayName || 'Home'}`,
+        homeTeam: homeTeam.displayName || '',
+        awayTeam: awayTeam.displayName || '',
         poster: homeTeam.logo || awayTeam.logo || 'https://via.placeholder.com/300x450?text=Live+Sports',
-        background: competition.venue?.fullName 
-          ? `https://via.placeholder.com/1920x1080/0f172a/38bdf8.png&text=${encodeURIComponent(event.name)}`
-          : 'https://via.placeholder.com/1920x1080/0f172a/38bdf8.png&text=Live+Sports',
-        status: event.status?.type?.detail || 'Scheduled',
+        background: 'https://via.placeholder.com/1920x1080/0f172a/38bdf8.png?text=Live+Sports',
+        status: event.status?.type?.detail || 'Live/Scheduled',
         date: event.date
       };
     });
@@ -58,7 +56,7 @@ async function fetchTodayGames(sport) {
   }
 }
 
-// 2. Fetch Xtream Streams for Configured Categories
+// Fetch Xtream Live Streams for user's configured sport category IDs
 async function fetchXtreamLiveStreams(user, categoryIds = []) {
   if (!categoryIds || categoryIds.length === 0) return [];
   const { url, username, password } = user.xtream;
@@ -129,46 +127,69 @@ app.post('/api/user/update', async (req, res) => {
   return res.json({ success: true, uuid: user.uuid, manifestUrl: `/user/${uuid}/manifest.json` });
 });
 
-// ---------------- STREMIO / NUVIO ENGINE ----------------
+// ---------------- STREMIO ENGINE ----------------
 
 app.get('/user/:uuid/manifest.json', (req, res) => {
   const user = userConfigs[req.params.uuid];
   if (!user) return res.status(404).json({ error: 'Invalid manifest UUID' });
 
+  // Use date string in catalog ID to bypass Stremio catalog cache daily
+  const todayStr = new Date().toISOString().split('T')[0];
+
   const catalogs = user.selectedSports.map(sport => ({
     type: 'sports',
-    id: `sportballio_${sport.toLowerCase()}`,
-    name: `${sport} - Today's Games`
+    id: `sb_${sport.toLowerCase()}_${todayStr}`,
+    name: `${sport} Schedule & Streams`
   }));
 
   res.setHeader('Content-Type', 'application/json');
   res.json({
     id: `org.sportballio.${user.uuid}`,
-    version: '1.0.0',
-    name: 'Sportballio',
-    description: 'IPTV Live Sports directly mapped to ESPN game schedules',
+    version: '1.0.1',
+    name: 'Sportballio Live',
+    description: 'Dynamic IPTV Sports directly mapped to daily schedules',
     resources: ['catalog', 'meta', 'stream'],
     types: ['sports'],
     catalogs
   });
 });
 
-// Dynamic Catalog Endpoint (ESPN Real-Time Games)
+// Dynamic Catalog Endpoint
 app.get('/user/:uuid/catalog/sports/:id.json', async (req, res) => {
   const user = userConfigs[req.params.uuid];
   if (!user) return res.json({ metas: [] });
 
-  const sport = req.params.id.replace('sportballio_', '').toUpperCase();
-  const games = await fetchTodayGames(sport);
+  const rawId = req.params.id; // e.g., sb_wnba_2026-08-05
+  const parts = rawId.split('_');
+  const sport = parts[1] ? parts[1].toUpperCase() : 'WNBA';
 
-  const metas = games.map(game => ({
-    id: `sportballio:${sport.toLowerCase()}:${game.id}`,
-    type: 'sports',
-    name: game.name,
-    poster: game.poster,
-    background: game.background,
-    description: `Status: ${game.status} | Scheduled: ${new Date(game.date).toLocaleTimeString()}`
-  }));
+  const games = await fetchTodayGames(sport);
+  const configuredCategoryIds = user.sportCategories[sport] || [];
+  const xtreamStreams = await fetchXtreamLiveStreams(user, configuredCategoryIds);
+
+  let metas = [];
+
+  // Build catalog cards from ESPN Game Schedule
+  if (games.length > 0) {
+    metas = games.map(game => ({
+      id: `sb:${sport.toLowerCase()}:${game.id}`,
+      type: 'sports',
+      name: game.name,
+      poster: game.poster,
+      background: game.background,
+      description: `Status: ${game.status}`
+    }));
+  } else {
+    // Direct Fallback: Show actual IPTV streams as item cards if no games in schedule
+    metas = xtreamStreams.map(s => ({
+      id: `sbstream:${sport.toLowerCase()}:${s.stream_id}`,
+      type: 'sports',
+      name: s.name,
+      poster: s.stream_icon || 'https://via.placeholder.com/300x450?text=IPTV+Stream',
+      background: 'https://via.placeholder.com/1920x1080/0f172a/38bdf8.png?text=Live+Stream',
+      description: `Direct Channel ID: ${s.stream_id}`
+    }));
+  }
 
   res.setHeader('Content-Type', 'application/json');
   res.json({ metas });
@@ -176,55 +197,89 @@ app.get('/user/:uuid/catalog/sports/:id.json', async (req, res) => {
 
 // Dynamic Meta Details Endpoint
 app.get('/user/:uuid/meta/sports/:id.json', async (req, res) => {
-  const [prefix, sport, gameId] = req.params.id.split(':');
-  const games = await fetchTodayGames(sport);
-  const game = games.find(g => g.id === gameId);
+  const user = userConfigs[req.params.uuid];
+  if (!user) return res.json({ meta: {} });
 
-  if (!game) return res.json({ meta: {} });
+  const [prefix, sport, idVal] = req.params.id.split(':');
 
-  res.setHeader('Content-Type', 'application/json');
-  res.json({
-    meta: {
-      id: req.params.id,
-      type: 'sports',
-      name: game.name,
-      poster: game.poster,
-      background: game.background,
-      description: `Status: ${game.status} | Scheduled: ${new Date(game.date).toLocaleTimeString()}`
-    }
-  });
+  if (prefix === 'sb') {
+    const games = await fetchTodayGames(sport.toUpperCase());
+    const game = games.find(g => g.id === idVal);
+    if (!game) return res.json({ meta: {} });
+
+    return res.json({
+      meta: {
+        id: req.params.id,
+        type: 'sports',
+        name: game.name,
+        poster: game.poster,
+        background: game.background,
+        description: `Status: ${game.status}`
+      }
+    });
+  } else {
+    const configuredCategoryIds = user.sportCategories[sport.toUpperCase()] || [];
+    const xtreamStreams = await fetchXtreamLiveStreams(user, configuredCategoryIds);
+    const stream = xtreamStreams.find(s => String(s.stream_id) === String(idVal));
+
+    return res.json({
+      meta: {
+        id: req.params.id,
+        type: 'sports',
+        name: stream ? stream.name : 'Live Stream',
+        poster: stream?.stream_icon || 'https://via.placeholder.com/300x450?text=IPTV+Stream',
+        background: 'https://via.placeholder.com/1920x1080/0f172a/38bdf8.png?text=Live+Stream',
+        description: `Direct Channel ID: ${idVal}`
+      }
+    });
+  }
 });
 
-// Dynamic Stream Resolver Endpoint (Matches ESPN Game to Xtream Streams)
+// Dynamic Stream Resolver Endpoint
 app.get('/user/:uuid/stream/sports/:id.json', async (req, res) => {
   const user = userConfigs[req.params.uuid];
   if (!user) return res.json({ streams: [] });
 
-  const [prefix, sport, gameId] = req.params.id.split(':');
-  const games = await fetchTodayGames(sport);
-  const game = games.find(g => g.id === gameId);
+  const [prefix, sport, idVal] = req.params.id.split(':');
+  const configuredCategoryIds = user.sportCategories[sport.toUpperCase()] || [];
+  const xtreamStreams = await fetchXtreamLiveStreams(user, configuredCategoryIds);
+  const baseUrl = user.xtream.url.replace(/\/+$/, '');
+
+  // Direct IPTV Stream Fallback
+  if (prefix === 'sbstream') {
+    const stream = xtreamStreams.find(s => String(s.stream_id) === String(idVal));
+    if (!stream) return res.json({ streams: [] });
+
+    return res.json({
+      streams: [{
+        title: stream.name,
+        url: `${baseUrl}/live/${encodeURIComponent(user.xtream.username)}/${encodeURIComponent(user.xtream.password)}/${stream.stream_id}.m3u8`
+      }]
+    });
+  }
+
+  // ESPN Game Match
+  const games = await fetchTodayGames(sport.toUpperCase());
+  const game = games.find(g => g.id === idVal);
 
   if (!game) return res.json({ streams: [] });
 
-  const configuredCategoryIds = user.sportCategories[sport.toUpperCase()] || [];
-  const xtreamStreams = await fetchXtreamLiveStreams(user, configuredCategoryIds);
+  const homeKw = game.homeTeam.toLowerCase().split(' ').filter(w => w.length > 2);
+  const awayKw = game.awayTeam.toLowerCase().split(' ').filter(w => w.length > 2);
 
-  const homeKw = game.homeTeam.toLowerCase().split(' ');
-  const awayKw = game.awayTeam.toLowerCase().split(' ');
-
-  // Filter streams matching home or away team names
-  const matchedStreams = xtreamStreams.filter(stream => {
-    const streamName = stream.name.toLowerCase();
-    const matchesHome = homeKw.some(kw => kw.length > 3 && streamName.includes(kw));
-    const matchesAway = awayKw.some(kw => kw.length > 3 && streamName.includes(kw));
+  // Filter streams by matching team names
+  const matchedStreams = xtreamStreams.filter(s => {
+    const streamName = s.name.toLowerCase();
+    const matchesHome = homeKw.some(kw => streamName.includes(kw));
+    const matchesAway = awayKw.some(kw => streamName.includes(kw));
     return matchesHome || matchesAway;
   });
 
+  // If match yields zero, fallback to supplying all category streams
   const streamsToReturn = matchedStreams.length > 0 ? matchedStreams : xtreamStreams;
-  const baseUrl = user.xtream.url.replace(/\/+$/, '');
 
   const streams = streamsToReturn.map(s => ({
-    title: `${s.name} (${s.stream_type || 'Live'})`,
+    title: s.name,
     url: `${baseUrl}/live/${encodeURIComponent(user.xtream.username)}/${encodeURIComponent(user.xtream.password)}/${s.stream_id}.m3u8`
   }));
 
