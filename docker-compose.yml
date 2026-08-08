@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  sportballio:
+    build: .
+    container_name: sportballio
+    restart: unless-stopped
+    ports:
+      - "2323:2323"
+    environment:
+      - PORT=2323
+      - HOST=0.0.0.0
+    volumes:
+      - ./data:/usr/src/app/data

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SPORTBALLIO - Configurator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body { background-color: #0f172a; color: #f8fafc; }
+    .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between">
+
+  <!-- Main Container -->
+  <div class="max-w-4xl mx-auto px-4 py-8 w-full">
+
+    <!-- Header -->
+    <header class="text-center mb-8">
+      <h1 class="text-4xl font-extrabold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500">
+        SPORTBALLIO
+      </h1>
+      <p class="text-slate-400 text-sm mt-1">BYO IPTV Sports Streaming Addon Configurator</p>
+    </header>
+
+    <!-- Auth Tabs -->
+    <div id="auth-section" class="glass rounded-xl p-6 shadow-2xl mb-8">
+      <div class="flex border-b border-slate-700 mb-6">
+        <button id="tab-login" class="flex-1 py-3 text-center font-bold text-blue-400 border-b-2 border-blue-500 focus:outline-none" onclick="switchTab('login')">
+          <i class="fa-solid fa-right-to-bracket mr-2"></i>Login
+        </button>
+        <button id="tab-register" class="flex-1 py-3 text-center font-bold text-slate-400 border-b-2 border-transparent hover:text-slate-200 focus:outline-none" onclick="switchTab('register')">
+          <i class="fa-solid fa-user-plus mr-2"></i>Create New Account
+        </button>
+      </div>
+
+      <!-- Login Form -->
+      <form id="form-login" onsubmit="handleLogin(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">User UUID</label>
+          <input type="text" id="login-uuid" required placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Password</label>
+          <input type="password" id="login-password" required placeholder="Enter your password" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none">
+        </div>
+        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 font-bold py-2.5 rounded-lg text-sm transition">
+          Login & Load Profile
+        </button>
+      </form>
+
+      <!-- Register Form -->
+      <form id="form-register" onsubmit="handleRegister(event)" class="space-y-4 hidden">
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Account Password</label>
+          <input type="password" id="register-password" required placeholder="Set a secure password" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Time Zone</label>
+          <select id="register-timezone" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none">
+            <option value="America/New_York">Eastern Time (ET)</option>
+            <option value="America/Chicago">Central Time (CT)</option>
+            <option value="America/Denver">Mountain Time (MT)</option>
+            <option value="America/Phoenix">Mountain Standard (AZ)</option>
+            <option value="America/Los_Angeles">Pacific Time (PT)</option>
+          </select>
+        </div>
+        <button type="submit" class="w-full bg-green-600 hover:bg-green-500 font-bold py-2.5 rounded-lg text-sm transition">
+          Generate UUID & Create Profile
+        </button>
+      </form>
+    </div>
+
+    <!-- Active User Dashboard (Hidden by default) -->
+    <div id="dashboard-section" class="glass rounded-xl p-6 shadow-2xl mb-8 hidden">
+      <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-700 pb-4 mb-6 gap-4">
+        <div>
+          <span class="text-xs text-slate-400 uppercase tracking-wider">Active Account</span>
+          <div id="active-uuid-display" class="font-mono text-sm text-blue-400 font-bold"></div>
+        </div>
+        <button onclick="copyManifestUrl()" class="bg-indigo-600 hover:bg-indigo-500 text-xs font-bold py-2 px-4 rounded-lg transition flex items-center">
+          <i class="fa-solid fa-copy mr-2"></i>Copy Install Link
+        </button>
+      </div>
+
+      <!-- Xtream Credentials -->
+      <div class="bg-slate-900/60 border border-slate-800 rounded-lg p-4 mb-6 space-y-4">
+        <h3 class="font-bold text-sm text-slate-300">IPTV Xtream API Credentials</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input type="text" id="xtream-url" placeholder="Server URL (http://...)" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:border-blue-500 focus:outline-none">
+          <input type="text" id="xtream-username" placeholder="Username" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:border-blue-500 focus:outline-none">
+          <input type="password" id="xtream-password" placeholder="Password" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs focus:border-blue-500 focus:outline-none">
+        </div>
+        <button onclick="fetchCategories()" class="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold py-2 px-4 rounded-lg transition w-full">
+          Fetch & Load Xtream Categories
+        </button>
+      </div>
+
+      <!-- Sport Configuration Sections -->
+      <div id="sports-config-container" class="space-y-6">
+        <!-- Dynamically injected sports inputs -->
+      </div>
+
+      <div class="mt-8 border-t border-slate-700 pt-6">
+        <button onclick="saveProfileSettings()" class="w-full bg-blue-600 hover:bg-blue-500 font-bold py-3 rounded-lg text-sm transition">
+          Save Profile Settings
+        </button>
+      </div>
+    </div>
+
+    <!-- Status Messages -->
+    <div id="status-message" class="hidden rounded-lg p-4 text-sm font-semibold mb-6"></div>
+
+  </div>
+
+  <script>
+    const SPORTS = ['MLB', 'NBA', 'NFL', 'NHL', 'WNBA'];
+    let activeUser = null;
+    let fetchedCategories = [];
+
+    function switchTab(tab) {
+      if (tab === 'login') {
+        document.getElementById('form-login').classList.remove('hidden');
+        document.getElementById('form-register').classList.add('hidden');
+        document.getElementById('tab-login').className = "flex-1 py-3 text-center font-bold text-blue-400 border-b-2 border-blue-500 focus:outline-none";
+        document.getElementById('tab-register').className = "flex-1 py-3 text-center font-bold text-slate-400 border-b-2 border-transparent hover:text-slate-200 focus:outline-none";
+      } else {
+        document.getElementById('form-register').classList.remove('hidden');
+        document.getElementById('form-login').classList.add('hidden');
+        document.getElementById('tab-register').className = "flex-1 py-3 text-center font-bold text-blue-400 border-b-2 border-blue-500 focus:outline-none";
+        document.getElementById('tab-login').className = "flex-1 py-3 text-center font-bold text-slate-400 border-b-2 border-transparent hover:text-slate-200 focus:outline-none";
+      }
+    }
+
+    function showStatus(msg, isError = false) {
+      const el = document.getElementById('status-message');
+      el.textContent = msg;
+      el.className = `rounded-lg p-4 text-sm font-semibold mb-6 ${isError ? 'bg-red-900/50 text-red-200 border border-red-700' : 'bg-green-900/50 text-green-200 border border-green-700'}`;
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 5000);
+    }
+
+    async function handleRegister(e) {
+      e.preventDefault();
+      const password = document.getElementById('register-password').value;
+      const timeZone = document.getElementById('register-timezone').value;
+
+      try {
+        const res = await fetch('/api/user/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password, timeZone })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showStatus(`Account created! Your UUID is: ${data.uuid}`);
+          document.getElementById('login-uuid').value = data.uuid;
+          document.getElementById('login-password').value = password;
+          switchTab('login');
+        } else {
+          showStatus(data.error || 'Registration failed.', true);
+        }
+      } catch (err) {
+        showStatus('Network error during registration.', true);
+      }
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const uuid = document.getElementById('login-uuid').value.trim();
+      const password = document.getElementById('login-password').value;
+
+      try {
+        const res = await fetch('/api/user/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uuid, password })
+        });
+        const data = await res.json();
+        if (data.success) {
+          activeUser = { uuid, password, ...data };
+          document.getElementById('active-uuid-display').textContent = uuid;
+          document.getElementById('auth-section').classList.add('hidden');
+          document.getElementById('dashboard-section').classList.remove('hidden');
+          if (activeUser.xtream) {
+            document.getElementById('xtream-url').value = activeUser.xtream.url || '';
+            document.getElementById('xtream-username').value = activeUser.xtream.username || '';
+            document.getElementById('xtream-password').value = activeUser.xtream.password || '';
+          }
+          renderSportsConfig();
+          showStatus('Successfully authenticated!');
+        } else {
+          showStatus(data.error || 'Login failed.', true);
+        }
+      } catch (err) {
+        showStatus('Network error during login.', true);
+      }
+    }
+
+    async function fetchCategories() {
+      const url = document.getElementById('xtream-url').value.trim();
+      const username = document.getElementById('xtream-username').value.trim();
+      const password = document.getElementById('xtream-password').value.trim();
+
+      if (!url || !username || !password) {
+        return showStatus('Please enter URL, Username, and Password.', true);
+      }
+
+      showStatus('Fetching categories from Xtream server...');
+
+      try {
+        const res = await fetch('/api/xtream/categories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, username, password })
+        });
+        const data = await res.json();
+        if (data.success) {
+          fetchedCategories = data.categories;
+          showStatus(`Fetched ${fetchedCategories.length} categories!`);
+          renderSportsConfig();
+        } else {
+          showStatus(data.error || 'Failed to fetch categories.', true);
+        }
+      } catch (err) {
+        showStatus('Network error while connecting to Xtream API.', true);
+      }
+    }
+
+    function filterCategories(sport) {
+      const searchInput = document.getElementById(`search-${sport}`).value.toLowerCase();
+      const checkboxes = document.querySelectorAll(`.category-item-${sport}`);
+
+      checkboxes.forEach(item => {
+        const name = item.getAttribute('data-name').toLowerCase();
+        if (name.includes(searchInput)) {
+          item.classList.remove('hidden');
+        } else {
+          item.classList.add('hidden');
+        }
+      });
+    }
+
+    function renderSportsConfig() {
+      const container = document.getElementById('sports-config-container');
+      container.innerHTML = '';
+
+      SPORTS.forEach(sport => {
+        const userSelected = (activeUser && activeUser.sportCategories && activeUser.sportCategories[sport]) || [];
+
+        const section = document.createElement('div');
+        section.className = 'bg-slate-900/40 border border-slate-800 rounded-lg p-4';
+
+        let categoryCheckboxesHtml = '';
+        if (fetchedCategories.length === 0) {
+          categoryCheckboxesHtml = '<p class="text-xs text-slate-500 italic">Fetch Xtream categories above to view available folders.</p>';
+        } else {
+          categoryCheckboxesHtml = fetchedCategories.map(cat => {
+            const isChecked = userSelected.includes(cat.category_id) ? 'checked' : '';
+            return `
+              <label class="category-item-${sport} flex items-center space-x-2 text-xs text-slate-300 hover:text-white cursor-pointer py-1" data-name="${cat.category_name}">
+                <input type="checkbox" data-sport="${sport}" value="${cat.category_id}" ${isChecked} class="rounded bg-slate-800 border-slate-700 text-blue-600 focus:ring-0">
+                <span>${cat.category_name}</span>
+              </label>
+            `;
+          }).join('');
+        }
+
+        section.innerHTML = `
+          <h4 class="font-bold text-sm text-blue-400 mb-2">${sport} Settings</h4>
+          <div class="mb-3">
+            <label class="block text-xs text-slate-400 mb-1">Select Category Folders for ${sport}:</label>
+
+            <div class="relative mb-2">
+              <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-xs text-slate-500"></i>
+              <input type="text" id="search-${sport}" onkeyup="filterCategories('${sport}')" placeholder="Filter ${sport} categories..." class="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none text-slate-200">
+            </div>
+
+            <div class="max-h-96 overflow-y-auto bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-1">
+              ${categoryCheckboxesHtml}
+            </div>
+          </div>
+        `;
+
+        container.appendChild(section);
+      });
+    }
+
+    async function saveProfileSettings() {
+      if (!activeUser) return;
+
+      const xtream = {
+        url: document.getElementById('xtream-url').value.trim(),
+        username: document.getElementById('xtream-username').value.trim(),
+        password: document.getElementById('xtream-password').value.trim()
+      };
+
+      const sportCategories = {};
+      SPORTS.forEach(sport => {
+        const checked = Array.from(document.querySelectorAll(`input[data-sport="${sport}"]:checked`)).map(cb => cb.value);
+        sportCategories[sport] = checked;
+      });
+
+      try {
+        const res = await fetch('/api/user/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uuid: activeUser.uuid,
+            password: activeUser.password,
+            xtream,
+            sportCategories
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          activeUser.xtream = xtream;
+          activeUser.sportCategories = sportCategories;
+          showStatus('Settings saved successfully!');
+        } else {
+          showStatus(data.error || 'Failed to save settings.', true);
+        }
+      } catch (err) {
+        showStatus('Network error while saving settings.', true);
+      }
+    }
+
+    function copyManifestUrl() {
+      if (!activeUser) return;
+      const manifestUrl = `${window.location.origin}/user/${activeUser.uuid}/manifest.json`;
+
+      // navigator.clipboard only exists in secure contexts (https:// or localhost).
+      // This app is often accessed over plain http://<vps-ip>, so fall back to a
+      // manual textarea+execCommand copy when the modern API isn't available.
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(manifestUrl)
+          .then(() => showStatus('Manifest URL copied to clipboard!'))
+          .catch(() => fallbackCopy(manifestUrl));
+      } else {
+        fallbackCopy(manifestUrl);
+      }
+    }
+
+    function fallbackCopy(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+
+      let copied = false;
+      try {
+        copied = document.execCommand('copy');
+      } catch (err) {
+        copied = false;
+      }
+      document.body.removeChild(textarea);
+
+      if (copied) {
+        showStatus('Manifest URL copied to clipboard!');
+      } else {
+        showStatus(`Couldn't auto-copy. Manifest URL: ${text}`, true);
+      }
+    }
+  </script>
+</body>
+</html>
